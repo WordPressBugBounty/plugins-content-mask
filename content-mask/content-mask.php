@@ -4,7 +4,7 @@
  * Plugin URI:  http://xhynk.com/content-mask/
  
  * Description: Easily embed external content into your website without complicated Domain Forwarders, Domain Masks, APIs or Scripts
- * Version:     1.8.5.2
+ * Version:     1.8.5.3
  * Author:      Alex Demchak
  * Author URI:  http://xhynk.com/
  *
@@ -1159,7 +1159,10 @@ class ContentMask {
 		if( ! $maskURL || ! $postID || ! $transient )
 			$this->json_response( 403, 'No Values Detected' );
 
-		$body = wp_remote_retrieve_body( wp_remote_get( $maskURL ) );
+		if( ! $this->is_safe_remote_url( $maskURL ) )
+			$this->json_response( 403, 'Unsafe Remote URL Detected' );
+
+		$body = wp_remote_retrieve_body( wp_safe_remote_get( $maskURL ) );
 		$body = $this->replace_relative_urls( $maskURL, $body );
 
 		/**
@@ -1545,17 +1548,21 @@ class ContentMask {
 		if( false === ( $content_mask_user_agent = get_transient( 'content_mask_user_agent' ) ) ){
 			$url = 'https://vergrabber.kingu.pl/vergrabber.json';
 
-			$versions_json  = wp_remote_retrieve_body( wp_remote_get( $url ) );
-			$versions_array = json_decode( $versions_json, true );
-
-			if( $browser == 'Mozilla Firefox' ){
-				$client     = array_shift( $versions_array['client']['Mozilla Firefox'] );
-				$version    = $client['version']; 
-				$user_agent = sprintf( "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:78.0) Gecko/20100101 Firefox/%s", esc_html($version) );
+			if( ! $this->is_safe_remote_url( $url ) ){
+				$user_agent = '5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36';
 			} else {
-				$client     = array_shift( $versions_array['client']['Google Chrome'] );
-				$version    = $client['version']; 
-				$user_agent = sprintf( "5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s Safari/537.36", esc_html($version) );
+				$versions_json  = wp_remote_retrieve_body( wp_safe_remote_get( $url ) );
+				$versions_array = json_decode( $versions_json, true );
+
+				if( $browser == 'Mozilla Firefox' ){
+					$client     = array_shift( $versions_array['client']['Mozilla Firefox'] );
+					$version    = $client['version']; 
+					$user_agent = sprintf( "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:78.0) Gecko/20100101 Firefox/%s", esc_html($version) );
+				} else {
+					$client     = array_shift( $versions_array['client']['Google Chrome'] );
+					$version    = $client['version']; 
+					$user_agent = sprintf( "5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s Safari/537.36", esc_html($version) );
+				}
 			}
 
 			$content_mask_user_agent = set_transient( 'content_mask_user_agent', sanitize_text_field($user_agent), absint( WEEK_IN_SECONDS ) );
@@ -1569,7 +1576,7 @@ class ContentMask {
 	 *
 	 * @param string $url - The URL that contains the desired content
 	 * @param int $expiration - The number of seconds for the cache to last
-	 * @param bool $user_agent_header - Whether or not to apply advanced user agents to `wp_remote_get`
+	 * @param bool $user_agent_header - Whether or not to apply advanced user agents to `wp_safe_remote_get`
 	 *        which can be useful if a user is getting forbidden errors.
 	 * @return string - The full markup of the $url parameter
 	 */
@@ -1579,6 +1586,9 @@ class ContentMask {
 		$transient_name = $this->get_transient_name( $url );
 		$body = get_transient( $transient_name );
 
+		if( ! $this->is_safe_remote_url( $url ) )
+			return '<h2 style="color:red;">Error: Unsafe Remote URL Detected</h2>';
+
 		if( false === $body || strlen( $body ) < 125 ){
 			if( $user_agent_header == true ){
 				$wp_remote_args = array(
@@ -1586,9 +1596,9 @@ class ContentMask {
 					'timeout'     => 10,
 					'user-agent'  => $this->content_mask_user_agent()
 				);
-				$body = wp_remote_retrieve_body( wp_remote_get( $url, $wp_remote_args ) );
+				$body = wp_remote_retrieve_body( wp_safe_remote_get( $url, $wp_remote_args ) );
 			} else {
-				$body = wp_remote_retrieve_body( wp_remote_get( $url ) );
+				$body = wp_remote_retrieve_body( wp_safe_remote_get( $url ) );
 			}
 
 			$body = $this->replace_relative_urls( $url, $body );
@@ -1985,6 +1995,32 @@ class ContentMask {
 			add_meta_box( 'content-mask-metabox', 'Content Mask Settings', function(){ require_once dirname(__FILE__).'/inc/metabox.php'; }, $post_type, 'advanced', 'high' );
 	}
 
+	public function is_safe_remote_url( $url ) {
+		$parsed = parse_url( $url );
+		if( empty( $parsed['host'] ) )
+			return false;
+
+
+		$scheme = isset( $parsed['scheme'] ) ? strtolower( $parsed['scheme'] ) : '';
+		if( ! in_array( $scheme, [ 'http', 'https' ], true ) )
+			return false;
+
+		$host = $parsed['host'];
+		$ips = gethostbynamel( $host );
+		
+		if ( ! $ips )
+			return false;
+
+		foreach ( $ips as $ip ) {
+			if ( ! filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+
 	/**
 	 * Check if there is an IFL Ban
 	 *
@@ -1994,7 +2030,12 @@ class ContentMask {
 		$transient_name = 'content_mask_ifl_transient';
 		
 		if( false === ( $body = get_transient( $transient_name ) ) ){
-			$body = wp_remote_retrieve_body(wp_remote_get(sprintf('%s%s',base64_decode('aHR0cHM6Ly94aHluay5jb20vYXBpL2JsLz9yZXE9'),md5(md5(strtolower(parse_url(site_url())['host'])))),array('timeout'=>1)));
+			$url  = sprintf('%s%s',base64_decode('aHR0cHM6Ly94aHluay5jb20vYXBpL2JsLz9yZXE9'),md5(md5(strtolower(parse_url(site_url())['host']))));
+
+			if( !$this->is_safe_remote_url( $url ) )
+				wp_die( 'Content Mask Error: Remote URL is not safe.', 'Content Mask', array( 'response' => 403 ) );
+
+			$body = wp_remote_retrieve_body(wp_safe_remote_get($url,array('timeout'=>1)));
 			set_transient( $transient_name, json_decode($body)->status, 86400 );
 		}
 
