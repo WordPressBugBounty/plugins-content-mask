@@ -3,8 +3,8 @@ Contributors: alexdemchak
 Donate Link: https://www.paypal.me/xhynk/
 Tags: Embed, Domain Mask, Mask, Redirect, Link
 Requires at Least: 4.7
-Tested Up To: 6.8.3
-Stable tag: 1.8.5.3
+Tested Up To: 6.9.4
+Stable tag: 1.8.5.4
 Requires PHP: 5.4
 Author URI: https://xhynk.com/
 Plugin URL: https://xhynk.com/content-mask/
@@ -136,6 +136,10 @@ If your website is secured (with https://), make sure any links on the iframed p
 4. The same WordPress page with Content Mask enabled and set to https://example.com/. You can see the URL has remained the same but the content has been entirely replaced (on the front end only) by the content from https://example.com/
 
 == Changelog ==
+= 1.8.5.4 =
+* Security: require edit-post capability before returning a post's role/condition permissions over AJAX, fixing an Insecure Direct Object Reference (IDOR). Reported by Nabil Irawan (CVE-2025-58012).
+* Hardening: the "Content Mask enabled" admin notice now reads the current post from the trusted global rather than the raw request parameter.
+
 = 1.8.5.3 =
 * Revive abandoned notice, address SSRF
 

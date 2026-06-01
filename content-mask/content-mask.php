@@ -4,7 +4,7 @@
  * Plugin URI:  http://xhynk.com/content-mask/
  
  * Description: Easily embed external content into your website without complicated Domain Forwarders, Domain Masks, APIs or Scripts
- * Version:     1.8.5.3
+ * Version:     1.8.5.4
  * Author:      Alex Demchak
  * Author URI:  http://xhynk.com/
  *
@@ -316,6 +316,16 @@ class ContentMask {
 		// Clean Variables
 		$post_id = $this->sanitize_int( $_POST['postID'] );
 
+		// Fix: make sure user can edit this (prevents IDOR - CVE-2025-58012)
+		if( ! user_can_edit_post( get_current_user_id(), $post_id ) )
+			$this->json_response(
+				400,
+				sprintf(
+					'You do not have access to manage this %s.',
+					get_post_type( $post_id )
+				)
+			);
+
 		$roles            = get_editable_roles();
 		$roles            = array_keys($roles);
 		$role_permissions = get_post_meta( $post_id, 'content_mask_role_permissions', true );
@@ -381,6 +391,16 @@ class ContentMask {
 
 		// Sanitize Post ID
 		$post_id = $this->sanitize_int( $_POST['postID'] );
+
+		// Fix: make sure user can edit this (prevents IDOR - CVE-2025-58012)
+		if( ! user_can_edit_post( get_current_user_id(), $post_id ) )
+			$this->json_response(
+				400,
+				sprintf(
+					'You do not have access to manage this %s.',
+					get_post_type( $post_id )
+				)
+			);
 
 		$condition_permissions = get_post_meta( $post_id, 'content_mask_condition_permissions', true );
 
@@ -950,7 +970,15 @@ class ContentMask {
 	public function display_admin_notices(){
 		// Notify Users that a page/post is Content Mask Enabled
 		if( isset( $_GET['post'] ) ) {
-			extract( $this->get_post_fields( $_GET['post'] ) );
+			// Use the trusted global $post for this edit screen rather than the
+			// raw $_GET['post'] request value (avoids reading meta for an
+			// arbitrary, unsanitized ID).
+			global $post;
+
+			if( ! $post )
+				return;
+
+			extract( $this->get_post_fields( $post->ID ) );
 
 			// Let users know this post is taken over by Content Mask for now
 			if( $content_mask_enable == true && $content_mask_url != ''){	
