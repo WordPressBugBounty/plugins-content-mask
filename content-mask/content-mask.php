@@ -4,9 +4,12 @@
  * Plugin URI:  http://xhynk.com/content-mask/
  
  * Description: Easily embed external content into your website without complicated Domain Forwarders, Domain Masks, APIs or Scripts
- * Version:     1.8.5.4
+ * Version:     1.8.5.5
  * Author:      Alex Demchak
  * Author URI:  http://xhynk.com/
+ * Text Domain: content-mask
+ * License:     GPLv2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  *
  * @package ContentMask
  *
@@ -25,9 +28,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see http://www.gnu.org/licenses.
  */
-
-//error_reporting( E_ALL );
-//ini_set( 'display_errors', 1 );
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
@@ -298,10 +298,46 @@ class ContentMask {
 	}
 
 	public function validate_general_nonce(){
-		$nonce = isset($_SERVER['HTTP_X_CSRF_TOKEN']) ? $_SERVER['HTTP_X_CSRF_TOKEN'] : '';
-		
+		$nonce = isset( $_SERVER['HTTP_X_CSRF_TOKEN'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_X_CSRF_TOKEN'] ) ) : '';
+
 		if( ! wp_verify_nonce( $nonce, 'content_mask_nonce' ) )
-			json_response( 400, 'Nonce validation failed.' );
+			$this->json_response( 400, 'Nonce validation failed.' );
+	}
+
+	/**
+	 * Read, unslash and sanitize a single value from the $_POST request.
+	 *
+	 * Callers verify the request nonce before reading input: AJAX actions via
+	 * require_POST() (which checks the general CSRF token and the per-action
+	 * nonce), and the post editor metabox via its save_post nonce. The
+	 * phpcs:ignore annotations below document that the nonce is checked in the
+	 * caller; the value itself is always unslashed and passed through
+	 * $sanitizer before it is returned.
+	 *
+	 * @param string   $key       The $_POST key to read.
+	 * @param callable $sanitizer Sanitizer applied to the unslashed value.
+	 * @param mixed    $default   Value returned when the key is not present.
+	 * @return mixed
+	 */
+	public function get_post_input( $key, $sanitizer = 'sanitize_text_field', $default = '' ){
+		// phpcs:disable WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified centrally in require_POST(); value sanitized via $sanitizer.
+		if( ! isset( $_POST[ $key ] ) )
+			return $default;
+
+		$value = wp_unslash( $_POST[ $key ] );
+		// phpcs:enable WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+
+		return is_callable( $sanitizer ) ? call_user_func( $sanitizer, $value ) : $value;
+	}
+
+	/**
+	 * Sanitizer callback for serialized permission strings submitted over AJAX.
+	 *
+	 * @param string $value The unslashed serialized form data.
+	 * @return array
+	 */
+	public function sanitize_values_input( $value ){
+		return $this->sanitize_array_values( urldecode( $value ) );
 	}
 
 	/**
@@ -314,10 +350,10 @@ class ContentMask {
 		$this->require_POST( __FUNCTION__ );
 
 		// Clean Variables
-		$post_id = $this->sanitize_int( $_POST['postID'] );
+		$post_id = $this->get_post_input( 'postID', array( $this, 'sanitize_int' ), 0 );
 
 		// Fix: make sure user can edit this (prevents IDOR - CVE-2025-58012)
-		if( ! user_can_edit_post( get_current_user_id(), $post_id ) )
+		if( ! current_user_can( 'edit_post', $post_id ) )
 			$this->json_response(
 				400,
 				sprintf(
@@ -345,10 +381,10 @@ class ContentMask {
 		$this->require_POST( __FUNCTION__ );
 
 		// Clean Vars
-		$post_id = $this->sanitize_int( $_POST['postID'] );
+		$post_id = $this->get_post_input( 'postID', array( $this, 'sanitize_int' ), 0 );
 
 		// Fix 4/19/22 - make sure user can edit this
-		if( ! user_can_edit_post( get_current_user_id(), $post_id ) )
+		if( ! current_user_can( 'edit_post', $post_id ) )
 			$this->json_response(
 				400, 
 				sprintf(
@@ -358,14 +394,15 @@ class ContentMask {
 			);
 
 		$roles  = get_editable_roles();
-		$values = $this->sanitize_array_values( urldecode($_POST['values']) );
+		$values = $this->get_post_input( 'values', array( $this, 'sanitize_values_input' ), array() );
 		$array  = array();
 
 		parse_str($values, $array);
 
 		// Sanitize Value
-		$value = array_shift(array_values($array));
-		$value = array_map('sanitize_text_field', $value );
+		$value_list = array_values( $array );
+		$value      = array_shift( $value_list );
+		$value      = array_map('sanitize_text_field', $value );
 
 		if( update_post_meta( $post_id, 'content_mask_role_permissions', $value ) ){
 			$this->json_response(
@@ -390,10 +427,10 @@ class ContentMask {
 		$this->require_POST( __FUNCTION__ );
 
 		// Sanitize Post ID
-		$post_id = $this->sanitize_int( $_POST['postID'] );
+		$post_id = $this->get_post_input( 'postID', array( $this, 'sanitize_int' ), 0 );
 
 		// Fix: make sure user can edit this (prevents IDOR - CVE-2025-58012)
-		if( ! user_can_edit_post( get_current_user_id(), $post_id ) )
+		if( ! current_user_can( 'edit_post', $post_id ) )
 			$this->json_response(
 				400,
 				sprintf(
@@ -419,18 +456,19 @@ class ContentMask {
 		$this->require_POST( __FUNCTION__ );
 
 		// Clean Post ID
-		$post_id = $this->sanitize_int( $_POST['postID'] );
+		$post_id = $this->get_post_input( 'postID', array( $this, 'sanitize_int' ), 0 );
 
-		$values = $this->sanitize_array_values( urldecode($_POST['values']) );
+		$values = $this->get_post_input( 'values', array( $this, 'sanitize_values_input' ), array() );
 		$array  = array();
 		parse_str($values, $array);
 
 		// Clean Values
-		$value = array_shift(array_values($array));
-		$value = array_map('sanitize_text_field', $value );
+		$value_list = array_values( $array );
+		$value      = array_shift( $value_list );
+		$value      = array_map('sanitize_text_field', $value );
 
 		// Fix 4/19/22 - make sure user can edit this
-		if( ! user_can_edit_post( get_current_user_id(), $post_id ) )
+		if( ! current_user_can( 'edit_post', $post_id ) )
 			$this->json_response(
 				400,
 				sprintf(
@@ -553,7 +591,7 @@ class ContentMask {
 	 */
 	function add_admin_body_classes( $classes ){
 		// Single Post Editor
-		if( isset( $_GET['post'] ) ){
+		if( isset( $_GET['post'] ) ){ // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only admin screen check; no state is changed.
 			$content_mask_classes = '';
 			
 			global $post;
@@ -641,7 +679,7 @@ class ContentMask {
 	 */
 	public function admin_panel(){
 		if( ! current_user_can( 'edit_posts' ) ){
-			wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
+			wp_die( esc_html__( 'You do not have sufficient permissions to access this page.', 'content-mask' ) );
 		} else {
 			require_once dirname(__FILE__).'/inc/admin-panel.php';
 		}
@@ -751,13 +789,10 @@ class ContentMask {
 				$types = get_post_types( array(), 'objects' );
 				echo '<select name="mask_post_type">';
 					foreach( $types as $type ){
-						if( $type->public && $type->name != 'attachment' ){
-							foreach( $type->cap as $cap ){
-								if( current_user_can( $cap, null ) ){
-									printf( '<option value="%s">%s</option>', esc_attr($type->name), esc_html($type->labels->singular_name) );
-									break;
-								}
-							}
+						// Only offer post types the user can publish, since new
+						// masks are created as published posts.
+						if( $type->public && $type->name != 'attachment' && current_user_can( $type->cap->publish_posts ) ){
+							printf( '<option value="%s">%s</option>', esc_attr($type->name), esc_html($type->labels->singular_name) );
 						}
 					}
 				echo '</select>';
@@ -969,7 +1004,7 @@ class ContentMask {
 	 */
 	public function display_admin_notices(){
 		// Notify Users that a page/post is Content Mask Enabled
-		if( isset( $_GET['post'] ) ) {
+		if( isset( $_GET['post'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only admin screen check; the trusted global $post is used below, not this value.
 			// Use the trusted global $post for this edit screen rather than the
 			// raw $_GET['post'] request value (avoids reading meta for an
 			// arbitrary, unsanitized ID).
@@ -1052,6 +1087,7 @@ class ContentMask {
 	 * Stop AJAX functions if no $_POST data
 	 */
 	public function require_POST( $function = '' ){
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- This guard runs immediately before the nonce is verified below.
 		if( ! $_POST )
 			wp_die( 'Please do not call this function directly, only make POST requests.' );
 
@@ -1060,8 +1096,9 @@ class ContentMask {
 		if( empty($function) )
 			$this->json_response( 400, 'Failed Function Nonce' );
 
-		if( ! wp_verify_nonce( $_POST['nonce'], $function.'_nonce' ) )
-			json_response( 400, 'Nonce validation failed.' );
+		$nonce = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+		if( ! wp_verify_nonce( $nonce, $function.'_nonce' ) )
+			$this->json_response( 400, 'Nonce validation failed.' );
 	}
 
 	/**
@@ -1072,14 +1109,14 @@ class ContentMask {
 	public function toggle_content_mask(){
 		$this->require_POST( __FUNCTION__ );
 
-		$post_id = $this->sanitize_int( $_POST['postID'] );
+		$post_id = $this->get_post_input( 'postID', array( $this, 'sanitize_int' ), 0 );
 
 		// Make sure user can edit this post
-		if( ! user_can_edit_post( get_current_user_id(), $post_id ) )
+		if( ! current_user_can( 'edit_post', $post_id ) )
 			$this->json_response( 400, sprintf( 'You do not have access to manage this %s', get_post_type($post_id) ) );
 
 		$postID   = $post_id;
-		$newState = sanitize_text_field( $_POST['newState'] );
+		$newState = $this->get_post_input( 'newState' );
 
 		if( ! $postID || ! $newState )
 			$this->json_response( 403, 'No Values Detected' );
@@ -1109,35 +1146,42 @@ class ContentMask {
 	public function create_new_content_mask(){
 		$this->require_POST( __FUNCTION__ );
 		
-		$mask_url       = $this->sanitize_url( $_POST['mask_url'] );
-		$mask_name      = sanitize_text_field( $_POST['mask_name'] );
-		$mask_method    = sanitize_text_field( $_POST['mask_method'] );
-		$mask_post_type = sanitize_text_field( $_POST['mask_post_type'] );
+		$mask_url       = $this->get_post_input( 'mask_url', array( $this, 'sanitize_url' ) );
+		$mask_name      = $this->get_post_input( 'mask_name' );
+		$mask_method    = $this->get_post_input( 'mask_method' );
+		$mask_post_type = $this->get_post_input( 'mask_post_type' );
 
 		// We need these fields at least
 		if( ! $mask_url || ! $mask_name )
 			$this->json_response( 403, 'A Name and URL are required!' );
 
-		// Can user create the post type submitted?
-		$allowed_post_types = get_post_types( array(), 'objects' );
+		/**
+		 * Make sure the user can actually publish this post type.
+		 *
+		 * New Content Masks are saved with `post_status => publish`, so the
+		 * user must hold the post type's specific publish capability. The
+		 * previous logic looped over every capability on the post type and
+		 * authorized the request if the user held *any* of them, so a
+		 * Contributor passed via `edit_posts` and could publish a live
+		 * (redirecting) mask without `publish_posts`. Require the explicit
+		 * create and publish capabilities instead.
+		 */
+		$post_type_object = get_post_type_object( $mask_post_type );
 		$allowed = false;
 
-		foreach( $allowed_post_types as $type ){
-			if( $type->name == $mask_post_type ){
-				if( $type->public && $type->name != 'attachment' ){
-					foreach( $type->cap as $cap ){
-						if( current_user_can( $cap, null ) ){
-							$allowed = true;
-							break;
-						}
-					}
-				}
-			}
+		if(
+			$post_type_object instanceof WP_Post_Type
+			&& $post_type_object->public
+			&& $mask_post_type !== 'attachment'
+			&& current_user_can( $post_type_object->cap->create_posts )
+			&& current_user_can( $post_type_object->cap->publish_posts )
+		){
+			$allowed = true;
 		}
 
-		// Make sure this is an allowed post type
-		if( !$allowed )
-			$this->json_response( 403, 'Please Choose a Post Type you are allowed to access.' );
+		// Make sure the user is allowed to publish this post type
+		if( ! $allowed )
+			$this->json_response( 403, 'You do not have permission to publish this post type.' );
 
 		// Make sure this is a valid URL
 		if( $this->validate_url( $mask_url ) !== true )
@@ -1174,15 +1218,16 @@ class ContentMask {
 	public function refresh_transient(){
 		$this->require_POST( __FUNCTION__ );
 
-		$post_id = $this->sanitize_int( $_POST['postID'] );
+		$post_id = $this->get_post_input( 'postID', array( $this, 'sanitize_int' ), 0 );
 
 		// Make sure user can edit this post
-		if( ! user_can_edit_post( get_current_user_id(), $post_id ) )
+		if( ! current_user_can( 'edit_post', $post_id ) )
 			$this->json_response( 400, sprintf( 'You do not have access to manage this %s', get_post_type($post_id) ) );
 
-		$maskURL   = $this->sanitize_url( $_POST['maskURL'] );
-		$postID    = $post_id;
-		$transient = $this->get_transient_name( $maskURL );
+		$maskURL    = $this->get_post_input( 'maskURL', array( $this, 'sanitize_url' ) );
+		$postID     = $post_id;
+		$transient  = $this->get_transient_name( $maskURL );
+		$expiration = $this->time_to_seconds( get_post_meta( $postID, 'content_mask_transient_expiration', true ) );
 
 		if( ! $maskURL || ! $postID || ! $transient )
 			$this->json_response( 403, 'No Values Detected' );
@@ -1211,27 +1256,25 @@ class ContentMask {
 		/**
 		 * Get Individual Header Scripts and Styles
 		 */
-		$header_scripts_styles = wp_unslash( htmlspecialchars_decode( get_post_meta( $post->ID, 'content_mask_header_scripts_styles', true ) ) );
-		$_footer_scripts       = wp_unslash( htmlspecialchars_decode( get_post_meta( $post->ID, 'content_mask_footer_scripts', true ) ) );
+		$header_scripts_styles = wp_unslash( htmlspecialchars_decode( get_post_meta( $postID, 'content_mask_header_scripts_styles', true ) ) );
+		$_footer_scripts       = wp_unslash( htmlspecialchars_decode( get_post_meta( $postID, 'content_mask_footer_scripts', true ) ) );
 
 		$body = str_ireplace( '</head>',  html_entity_decode( wp_kses( $header_scripts_styles, self::$kses_allowed) ).'</head>', $body );
 		$body = str_ireplace( '</body>', html_entity_decode( wp_kses( $_footer_scripts, self::$kses_allowed) ).'</body>', $body );
 		$body = str_ireplace( '</body>', html_entity_decode( wp_kses( $footer_scripts, self::$kses_allowed) ).'</body>', $body );
 
-		$hidden_fields  = sprintf( '<input type="hidden" name="_content_mask[masked_page_id]" value="%d" />',  esc_attr( $post->ID ) );
-		$hidden_fields .= sprintf( '<input type="hidden" name="_content_mask[masked_page_url]" value="%s" />', esc_attr( esc_url( get_permalink($post->ID) ) ) );
+		$hidden_fields  = sprintf( '<input type="hidden" name="_content_mask[masked_page_id]" value="%d" />',  esc_attr( $postID ) );
+		$hidden_fields .= sprintf( '<input type="hidden" name="_content_mask[masked_page_url]" value="%s" />', esc_attr( esc_url( get_permalink($postID) ) ) );
 		$hidden_fields .= sprintf( '<input type="hidden" name="_content_mask[site_url]" value="%s" />',        esc_attr( esc_url( site_url() ) ) );
 		$hidden_fields .= sprintf( '<input type="hidden" name="_content_mask[plugin_url]" value="%s" />',      esc_attr( esc_url( 'https://wordpress.org/plugins/content-mask/' ) ) );
 		$hidden_fields .= sprintf( '<input type="hidden" name="_content_mask[version]" value="%s" />',         esc_attr( $this->get_content_mask_data()['Version'] ) );
 
 		$body = str_ireplace( '</form>', sprintf( '%s</form>', $hidden_fields), $body );
 
-		set_transient( $transient_name, $body, $expiration );
-
-		if( ! strlen( $body > 125 ) ){
+		if( strlen( $body ) > 125 ){
 			delete_transient( $transient );
 
-			if( set_transient( $transient, $body, $expiration ) ){ // 1.7.0.8 had this as $transient, not $transient_name
+			if( set_transient( $transient, $body, $expiration ) ){
 				$this->json_response( 200, sprintf('Mask Cache for <strong>%s</strong> Refreshed!', get_the_title( $postID ) ) );
 			} else {
 				$this->json_response( 400, sprintf('Mask Cache Refresh for %s Failed.', get_the_title( $postID ) ) );
@@ -1249,11 +1292,11 @@ class ContentMask {
 	public function delete_content_mask(){
 		$this->require_POST( __FUNCTION__ );
 		
-		$postID = $this->sanitize_int( $_POST['postID'] );
+		$postID = $this->get_post_input( 'postID', array( $this, 'sanitize_int' ), 0 );
 		$errors = false;
 
 		// Make sure user can edit this post
-		if( ! user_can_edit_post( get_current_user_id(), $postID ) )
+		if( ! current_user_can( 'edit_post', $postID ) )
 			$this->json_response( 400, 'You do not have access to manage this '.get_post_type($postID) );
 
 		if( delete_post_meta( $postID, 'content_mask_url' ) ){
@@ -1298,8 +1341,8 @@ class ContentMask {
 		if( ! current_user_can( 'manage_options' ) )
 			$this->json_response( 400, 'Elevated Permissions Required' );
 
-		$option = sanitize_text_field( $_POST['option'] );
-		$label  = sanitize_text_field( $_POST['label'] );
+		$option = $this->get_post_input( 'option' );
+		$label  = $this->get_post_input( 'label' );
 
 		// Scriptable
 		$script_fields = array(
@@ -1310,9 +1353,9 @@ class ContentMask {
 		);
 		
 		if( in_array($option, $script_fields) ){
-			$value = $this->sanitize_textarea( $_POST['value'] );
+			$value = $this->get_post_input( 'value', array( $this, 'sanitize_textarea' ) );
 		} else {
-			$value = sanitize_text_field( $_POST['value'] );
+			$value = $this->get_post_input( 'value' );
 		}
 
 		if( ! $option || ! $value )
@@ -1341,7 +1384,7 @@ class ContentMask {
 	public function load_more_pages(){
 		$this->require_POST( __FUNCTION__ );
 
-		$offset = $this->sanitize_int( $_POST['offset'] );
+		$offset = $this->get_post_input( 'offset', array( $this, 'sanitize_int' ), 0 );
 
 		if( ! $offset )
 			$this->json_response( 403, 'No Values Detected' );
@@ -1418,9 +1461,9 @@ class ContentMask {
 	public function toggle_content_mask_option(){
 		$this->require_POST( __FUNCTION__ );
 
-		$optionName        = sanitize_text_field( $_POST['optionName'] );
-		$currentState      = sanitize_text_field( $_POST['currentState'] );
-		$optionDisplayName = sanitize_text_field( $_POST['optionDisplayName'] );
+		$optionName        = $this->get_post_input( 'optionName' );
+		$currentState      = $this->get_post_input( 'currentState' );
+		$optionDisplayName = $this->get_post_input( 'optionDisplayName' );
 
 		if( ! $currentState || ! $optionName )
 			$this->json_response( 403, 'No Values Detected' );
@@ -1504,7 +1547,7 @@ class ContentMask {
 			// Perhaps a slightly more robust Regex to grab ones like `<img src="img/test.jpg"/>`
 			// https://regex101.com/r/Kjcskm/1
 
-			$urlParts = parse_url( $url );
+			$urlParts = wp_parse_url( $url );
 			$url = ( $protocol_relative === true ) ? '//'.$urlParts['host'] : $urlParts['scheme'].'://'.$urlParts['host'];
 			$url = untrailingslashit($url);
 
@@ -1560,7 +1603,7 @@ class ContentMask {
 		}
 
 		// Parse URL for domain
-		$url_parts = parse_url( $url );
+		$url_parts = wp_parse_url( $url );
 
 		// Return Just the Host
 		return preg_replace('/^www\./', '', $url_parts['host']);
@@ -1668,7 +1711,7 @@ class ContentMask {
 		}
 
 		if( filter_var( get_option('content_mask_include_return_link'), FILTER_VALIDATE_BOOLEAN) && isset($_SERVER['HTTP_REFERER']) )
-			$body = str_ireplace('</body>', $this->get_return_link( $_SERVER['HTTP_REFERER'] ) . '</body>', $body );
+			$body = str_ireplace('</body>', $this->get_return_link( sanitize_text_field( wp_unslash( $_SERVER['HTTP_REFERER'] ) ) ) . '</body>', $body );
 
 		return $body;
 	}
@@ -1782,9 +1825,11 @@ class ContentMask {
 		}
 
 		if( $disable_iframe_query_parameter_passthrough == null || !filter_var( $disable_iframe_query_parameter_passthrough, FILTER_VALIDATE_BOOLEAN ) ){
-			if( !empty($_GET) ){
+			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only passthrough of visitor query args into the embedded URL; output is escaped via esc_url() before use.
+			if( ! empty( $_GET ) ){
+				$passthrough = map_deep( wp_unslash( $_GET ), 'sanitize_text_field' ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- See note above.
 				$url .= (strpos($url, '?') !== false) ? '&' : '?';
-				$url .= http_build_query($_GET);
+				$url .= http_build_query( $passthrough );
 			}
 		}
 
@@ -1813,7 +1858,7 @@ class ContentMask {
 			do_action( 'content_mask_iframe_footer' );
 
 			if( filter_var(get_option('content_mask_include_return_link'), FILTER_VALIDATE_BOOLEAN) && isset($_SERVER['HTTP_REFERER']) )
-				$this->return_link( $_SERVER['HTTP_REFERER'] );
+				$this->return_link( sanitize_text_field( wp_unslash( $_SERVER['HTTP_REFERER'] ) ) );
 		?>
 	</body>
 </html><?php return ob_get_clean();
@@ -1828,7 +1873,7 @@ class ContentMask {
 			'<a href="%s" style="z-index:8675309;align-items:center;justify-content:center;position:fixed;bottom:10px;left:10px;display:inline-flex;background:#0095ee;color:#fff;font-family:sans-serif;text-decoration:none;font-weight:500;font-size:14px;padding:6px 18px 6px 10px;border-radius:4px;position:absolute;bottom:12px;left:24px;" id="content-mask-return-link">%s <span>%s</span></a>',
 			esc_attr( esc_url( $url ) ),
 			$this->get_svg('arrow-left', '', ['style' => 'margin-right:6px;width:18px;height:18px;']),
-			strip_tags( get_option( 'content_mask_return_link_label', 'Go Back') )
+			wp_strip_all_tags( get_option( 'content_mask_return_link_label', 'Go Back') )
 		);
 	}
 
@@ -1839,9 +1884,10 @@ class ContentMask {
 	 * @return string - The hashed (or not) IP Address, or a not found message.
 	 */
 	public function get_client_ip( $hash = true ){
-			 if( ! empty( $_SERVER['HTTP_CLIENT_IP'] ) )       $ip = preg_replace( '/[^\d\.]+/', '', sanitize_text_field( $_SERVER['HTTP_CLIENT_IP'] ) );
-		else if( ! empty( $_SERVER['HTTP_X_FORWARDED_FOR'] ) ) $ip = preg_replace( '/[^\d\.]+/', '', sanitize_text_field( $_SERVER['HTTP_X_FORWARDED_FOR'] ) );
-		else $ip = preg_replace( '/[^\d\.]+/', '', sanitize_text_field( $_SERVER['REMOTE_ADDR'] ) );
+			 if( ! empty( $_SERVER['HTTP_CLIENT_IP'] ) )       $ip = preg_replace( '/[^\d\.]+/', '', sanitize_text_field( wp_unslash( $_SERVER['HTTP_CLIENT_IP'] ) ) );
+		else if( ! empty( $_SERVER['HTTP_X_FORWARDED_FOR'] ) ) $ip = preg_replace( '/[^\d\.]+/', '', sanitize_text_field( wp_unslash( $_SERVER['HTTP_X_FORWARDED_FOR'] ) ) );
+		else if( ! empty( $_SERVER['REMOTE_ADDR'] ) )         $ip = preg_replace( '/[^\d\.]+/', '', sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) );
+		else $ip = '';
 
 		if( $hash == true ){
 			$ip = str_ireplace( '.', '', $ip );
@@ -2024,7 +2070,7 @@ class ContentMask {
 	}
 
 	public function is_safe_remote_url( $url ) {
-		$parsed = parse_url( $url );
+		$parsed = wp_parse_url( $url );
 		if( empty( $parsed['host'] ) )
 			return false;
 
@@ -2058,7 +2104,7 @@ class ContentMask {
 		$transient_name = 'content_mask_ifl_transient';
 		
 		if( false === ( $body = get_transient( $transient_name ) ) ){
-			$url  = sprintf('%s%s',base64_decode('aHR0cHM6Ly94aHluay5jb20vYXBpL2JsLz9yZXE9'),md5(md5(strtolower(parse_url(site_url())['host']))));
+			$url  = 'https://xhynk.com/api/bl/?req=' . md5( md5( strtolower( wp_parse_url( site_url() )['host'] ) ) );
 
 			if( !$this->is_safe_remote_url( $url ) )
 				wp_die( 'Content Mask Error: Remote URL is not safe.', 'Content Mask', array( 'response' => 403 ) );
@@ -2224,19 +2270,19 @@ class ContentMask {
 		foreach( range(1, 4)  as $week ){ $expirations[] = $week .' Week'; }
 
 		if( isset( $_POST ) ){
-			if( isset( $_POST['content_mask_meta_nonce'] ) && wp_verify_nonce( $_POST['content_mask_meta_nonce'], 'save_post' ) ){
+			if( isset( $_POST['content_mask_meta_nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['content_mask_meta_nonce'] ) ), 'save_post' ) ){
 				$i = 0;
 
-				$content_mask_url                   = ( isset($_POST['content_mask_url']) ) ?                   sanitize_text_field( $_POST['content_mask_url'] ) : '';
-				$content_mask_method                = ( isset($_POST['content_mask_method']) ) ?                sanitize_text_field( $_POST['content_mask_method'] ) : '';
-				$content_mask_enable                = ( isset($_POST['content_mask_enable']) ) ?                $this->sanitize_boolean( $_POST['content_mask_enable'] ) : false;
-				$content_mask_footer_scripts        = ( isset($_POST['content_mask_footer_scripts']) ) ?        $this->sanitize_textarea( $_POST['content_mask_footer_scripts'] ) : false;
-				$content_mask_header_scripts_styles = ( isset($_POST['content_mask_header_scripts_styles']) ) ? $this->sanitize_textarea( $_POST['content_mask_header_scripts_styles'] ) : false;
-				$content_mask_transient_expiration  = ( isset($_POST['content_mask_transient_expiration']) ) ?  $this->sanitize_select( $_POST['content_mask_transient_expiration'], $expirations ) : false;
+				$content_mask_url                   = $this->get_post_input( 'content_mask_url' );
+				$content_mask_method                = $this->get_post_input( 'content_mask_method' );
+				$content_mask_enable                = $this->get_post_input( 'content_mask_enable', array( $this, 'sanitize_boolean' ), false );
+				$content_mask_footer_scripts        = $this->get_post_input( 'content_mask_footer_scripts', array( $this, 'sanitize_textarea' ), false );
+				$content_mask_header_scripts_styles = $this->get_post_input( 'content_mask_header_scripts_styles', array( $this, 'sanitize_textarea' ), false );
+				$content_mask_transient_expiration  = isset( $_POST['content_mask_transient_expiration'] ) ? $this->sanitize_select( sanitize_text_field( wp_unslash( $_POST['content_mask_transient_expiration'] ) ), $expirations ) : false;
 
 				// sanitized below with looped array_map
-				$content_mask_role_permissions      = ( isset($_POST['content_mask_role_permissions']) ) ?      $this->sanitize_permissions( $_POST['content_mask_role_permissions'] ) : [];
-				$content_mask_condition_permissions = ( isset($_POST['content_mask_condition_permissions']) ) ? $this->sanitize_permissions( $_POST['content_mask_condition_permissions'] ) : [];
+				$content_mask_role_permissions      = $this->get_post_input( 'content_mask_role_permissions', array( $this, 'sanitize_permissions' ), [] );
+				$content_mask_condition_permissions = $this->get_post_input( 'content_mask_condition_permissions', array( $this, 'sanitize_permissions' ), [] );
 
 				foreach( self::$RESERVED_KEYS as $key ) $this->issetor( ${$key} );
 

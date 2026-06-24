@@ -4,6 +4,11 @@
 	// Define Query Args for Pages/Posts/CPTs with Content Masks defined
 	$load = 20;
 
+	// Current admin tab. Read-only UI state for a GET view, so no nonce is required.
+	$active_tab     = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only tab selection for display; no state is changed.
+	$toggle_options = array();
+	$tracking_checked = '';
+
 	$args = array(
 		'post_status' => ['publish', 'draft', 'pending', 'private'],
 		'post_type'   => get_post_types( '', 'names' ),
@@ -97,15 +102,15 @@
 		<h1 class="headline"><?php $this->echo_svg( 'content-mask' ); ?> <span>Content</span> <strong>Mask</strong> <span class="version-number">v<?php echo esc_html($this->get_content_mask_data()['Version']); ?></span> <span id="mobile-nav-toggle"><?php $this->echo_svg( 'menu' ); ?></span><span id="header-nav" class="alignright"><?php require_once dirname(__FILE__).'/admin-buttons.php'; ?></span></h1>
 		<div class="inner">
 			<nav class="sub-menu">
-				<li><a data-target="content-mask-pages" href="#" class="<?php echo ( !isset( $_GET['tab'] ) ) ? 'active' : ''; ?>"><span>List View</span></a></li>
+				<li><a data-target="content-mask-pages" href="#" class="<?php echo ( '' === $active_tab ) ? 'active' : ''; ?>"><span>List View</span></a></li>
 				<?php if( current_user_can('manage_options') ){ ?>
-					<li><a data-target="content-mask-options" href="#" class="<?php echo ( isset( $_GET['tab'] ) && $_GET['tab'] == 'options' ) ? 'active' : ''; ?>"><span>Options</span></a></li>
-					<li><a data-target="content-mask-scripts-styles" href="#" class="<?php echo ( isset( $_GET['tab'] ) && $_GET['tab'] == 'scripts-styles' ) ? 'active' : ''; ?>"><span>Scripts & Styles</span></a></li>
+					<li><a data-target="content-mask-options" href="#" class="<?php echo ( 'options' === $active_tab ) ? 'active' : ''; ?>"><span>Options</span></a></li>
+					<li><a data-target="content-mask-scripts-styles" href="#" class="<?php echo ( 'scripts-styles' === $active_tab ) ? 'active' : ''; ?>"><span>Scripts & Styles</span></a></li>
 				<?php } ?>
 			</nav>
 			
 			<!-- List of Content Masked Pages/Posts/CPTs -->
-			<div id="content-mask-pages" class="content-mask-panel <?php echo ( !isset($_GET['tab']) || !current_user_can('manage_options') ) ? 'active' : ''; ?> <?php if( $tracking_checked == true ){ echo 'visitor-tracking'; } ?> ">
+			<div id="content-mask-pages" class="content-mask-panel <?php echo ( '' === $active_tab || !current_user_can('manage_options') ) ? 'active' : ''; ?> <?php if( ! empty( $tracking_checked ) ){ echo 'visitor-tracking'; } ?> ">
 				<table>
 					<?php
 						echo "<tr data-attr-id='0' data-attr-state='' class='new-mask'>";
@@ -169,7 +174,7 @@
 			
 			<?php if( current_user_can('manage_options') ){ ?>
 				<!-- Content Mask Options and Settings -->
-				<div id="content-mask-options" class="content-mask-panel <?php echo ( isset( $_GET['tab'] ) && $_GET['tab'] == 'options' ) ? 'active' : ''; ?>">
+				<div id="content-mask-options" class="content-mask-panel <?php echo ( 'options' === $active_tab ) ? 'active' : ''; ?>">
 					<?php
 						$check_options = array(
 							array(
@@ -300,7 +305,7 @@
 				</div>
 
 				<!-- Content Masked Advanced Features and Scripts -->
-				<div id="content-mask-scripts-styles" class="content-mask-panel <?php echo ( isset( $_GET['tab'] ) && $_GET['tab'] == 'scripts-styles' ) ? 'active' : ''; ?>">
+				<div id="content-mask-scripts-styles" class="content-mask-panel <?php echo ( 'scripts-styles' === $active_tab ) ? 'active' : ''; ?>">
 					<div class="grid" columns="3" gap>
 						<?php
 							$method_types = array( 'download', 'iframe' );

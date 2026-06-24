@@ -3,8 +3,8 @@ Contributors: alexdemchak
 Donate Link: https://www.paypal.me/xhynk/
 Tags: Embed, Domain Mask, Mask, Redirect, Link
 Requires at Least: 4.7
-Tested Up To: 6.9.4
-Stable tag: 1.8.5.4
+Tested Up To: 7.0
+Stable tag: 1.8.5.5
 Requires PHP: 5.4
 Author URI: https://xhynk.com/
 Plugin URL: https://xhynk.com/content-mask/
@@ -136,6 +136,13 @@ If your website is secured (with https://), make sure any links on the iframed p
 4. The same WordPress page with Content Mask enabled and set to https://example.com/. You can see the URL has remained the same but the content has been entirely replaced (on the front end only) by the content from https://example.com/
 
 == Changelog ==
+= 1.8.5.5 =
+* Security: require the target post type's publish capability before creating a Content Mask over AJAX. This fixes a privilege escalation where a Contributor could publish a live mask (including a redirect) without the publish_posts capability.
+* Hardening: replaced the deprecated user_can_edit_post() permission checks with current_user_can( 'edit_post' ) on the edit, delete, toggle, and permission AJAX actions.
+* Hardening: every request value is now unslashed and sanitized through a single helper, the metabox and admin inputs included, resolving all Plugin Check sanitization and nonce notices.
+* Fixed: the Refresh Transient action referenced undefined variables and could fail on PHP 8; it now rebuilds and stores the cache correctly.
+* Maintenance: replaced an obfuscated internal URL with its plain value, switched to wp_parse_url() and wp_strip_all_tags(), normalized line endings, corrected nonce-failure responses, removed a pass-by-reference notice, added the plugin text domain and license headers, and tested up to WordPress 7.0.
+
 = 1.8.5.4 =
 * Security: require edit-post capability before returning a post's role/condition permissions over AJAX, fixing an Insecure Direct Object Reference (IDOR). Reported by Nabil Irawan (CVE-2025-58012).
 * Hardening: the "Content Mask enabled" admin notice now reads the current post from the trusted global rather than the raw request parameter.
