@@ -4,7 +4,7 @@
  * Plugin URI:  http://xhynk.com/content-mask/
  
  * Description: Easily embed external content into your website without complicated Domain Forwarders, Domain Masks, APIs or Scripts
- * Version:     1.8.5.5
+ * Version:     1.8.5.6
  * Author:      Alex Demchak
  * Author URI:  http://xhynk.com/
  * Text Domain: content-mask
@@ -232,24 +232,12 @@ class ContentMask {
 	public function __construct(){
 		add_action( 'template_redirect', [$this, 'process_page_request'], 1, 2 );
 
-		if( $this->can_mask_content() ){
-			add_action( 'save_post', [$this, 'save_meta'], 10, 1 );
-			add_action( 'add_meta_boxes', [$this, 'add_meta_boxes'], 1, 2 );
-			add_action( 'admin_menu', [$this, 'register_admin_menu'] );
-			add_action( 'admin_head', [$this, 'add_nonce'] );
-			add_action( 'admin_notices', [$this, 'display_admin_notices'] );
-			add_action( 'admin_enqueue_scripts', [$this, 'exclusive_admin_assets'] );
-			add_action( 'admin_enqueue_scripts', [$this, 'global_admin_assets'] );
-			add_action( 'manage_posts_custom_column', [$this, 'content_mask_column_content'], 10, 2 );
-			add_action( 'manage_pages_custom_column', [$this, 'content_mask_column_content'], 10, 2 );
-
-			foreach( self::$AJAX_ACTIONS as $action )
-				add_action( "wp_ajax_$action", [$this, $action] );
-
-			add_filter( 'admin_body_class', [$this, 'add_admin_body_classes'], 27 );
-			add_filter( 'manage_posts_columns', [$this, 'content_mask_column'] );
-			add_filter( 'manage_pages_columns', [$this, 'content_mask_column'] );
-		}
+		/**
+		 * Register the author-facing hooks once the current user and roles are
+		 * available. can_mask_content() calls wp_get_current_user(), which is
+		 * not reliable this early on plugins_loaded, so defer to `init`.
+		 */
+		add_action( 'init', [$this, 'register_maskable_hooks'] );
 
 		/**
 		 * Unhook Elegant Theme's "Bloom" flyin. It's not playing nice and is being hooked in below
@@ -269,6 +257,35 @@ class ContentMask {
 				}
 			}
 		}, 11 );
+	}
+
+	/**
+	 * Register the hooks that let an eligible user manage and save Content
+	 * Masks. Separated from the constructor and fired on `init` so that
+	 * can_mask_content() can safely call wp_get_current_user().
+	 *
+	 * @return void
+	 */
+	public function register_maskable_hooks(){
+		if( ! $this->can_mask_content() )
+			return;
+
+		add_action( 'save_post', [$this, 'save_meta'], 10, 1 );
+		add_action( 'add_meta_boxes', [$this, 'add_meta_boxes'], 1, 2 );
+		add_action( 'admin_menu', [$this, 'register_admin_menu'] );
+		add_action( 'admin_head', [$this, 'add_nonce'] );
+		add_action( 'admin_notices', [$this, 'display_admin_notices'] );
+		add_action( 'admin_enqueue_scripts', [$this, 'exclusive_admin_assets'] );
+		add_action( 'admin_enqueue_scripts', [$this, 'global_admin_assets'] );
+		add_action( 'manage_posts_custom_column', [$this, 'content_mask_column_content'], 10, 2 );
+		add_action( 'manage_pages_custom_column', [$this, 'content_mask_column_content'], 10, 2 );
+
+		foreach( self::$AJAX_ACTIONS as $action )
+			add_action( "wp_ajax_$action", [$this, $action] );
+
+		add_filter( 'admin_body_class', [$this, 'add_admin_body_classes'], 27 );
+		add_filter( 'manage_posts_columns', [$this, 'content_mask_column'] );
+		add_filter( 'manage_pages_columns', [$this, 'content_mask_column'] );
 	}
 
 	function get_role_names() {
@@ -622,7 +639,7 @@ class ContentMask {
 		$disabled_roles = $roles = array();
 
 		$wp_roles = $this->get_role_names();
-		if( is_array($wp_roles) )
+		if( ! is_array($wp_roles) )
 			return true; // We can't check wp_roles for some reason
 		
 		$current_user = wp_get_current_user();
@@ -1259,8 +1276,8 @@ class ContentMask {
 		$header_scripts_styles = wp_unslash( htmlspecialchars_decode( get_post_meta( $postID, 'content_mask_header_scripts_styles', true ) ) );
 		$_footer_scripts       = wp_unslash( htmlspecialchars_decode( get_post_meta( $postID, 'content_mask_footer_scripts', true ) ) );
 
-		$body = str_ireplace( '</head>',  html_entity_decode( wp_kses( $header_scripts_styles, self::$kses_allowed) ).'</head>', $body );
-		$body = str_ireplace( '</body>', html_entity_decode( wp_kses( $_footer_scripts, self::$kses_allowed) ).'</body>', $body );
+		$body = str_ireplace( '</head>',  wp_kses( html_entity_decode( $header_scripts_styles ), self::$kses_allowed ).'</head>', $body );
+		$body = str_ireplace( '</body>', wp_kses( html_entity_decode( $_footer_scripts ), self::$kses_allowed ).'</body>', $body );
 		$body = str_ireplace( '</body>', html_entity_decode( wp_kses( $footer_scripts, self::$kses_allowed) ).'</body>', $body );
 
 		$hidden_fields  = sprintf( '<input type="hidden" name="_content_mask[masked_page_id]" value="%d" />',  esc_attr( $postID ) );
@@ -1695,8 +1712,8 @@ class ContentMask {
 			$header_scripts_styles = wp_unslash( html_entity_decode( get_post_meta( $post->ID, 'content_mask_header_scripts_styles', true ) ) );
 			$_footer_scripts       = wp_unslash( html_entity_decode( get_post_meta( $post->ID, 'content_mask_footer_scripts', true ) ) );
 
-			$body = str_ireplace( '</head>', html_entity_decode( wp_kses( $header_scripts_styles, self::$kses_allowed ) ).'</head>', $body );
-			$body = str_ireplace( '</body>', html_entity_decode( wp_kses( $_footer_scripts, self::$kses_allowed ) ).'</body>', $body );
+			$body = str_ireplace( '</head>', wp_kses( html_entity_decode( $header_scripts_styles ), self::$kses_allowed ).'</head>', $body );
+			$body = str_ireplace( '</body>', wp_kses( html_entity_decode( $_footer_scripts ), self::$kses_allowed ).'</body>', $body );
 			$body = str_ireplace( '</body>', html_entity_decode( wp_kses( $footer_scripts, self::$kses_allowed ) ).'</body>', $body );
 
 			$hidden_fields  = sprintf( '<input type="hidden" name="_content_mask[masked_page_id]" value="%d" />',  esc_attr( $post->ID ) );
@@ -1761,7 +1778,7 @@ class ContentMask {
 			<?php
 				do_action( 'content_mask_iframe_header' );
 				echo html_entity_decode( wp_kses( $scripts, self::$kses_allowed ) );
-				echo html_entity_decode( wp_kses( $header_scripts_styles, self::$kses_allowed ) );
+				echo wp_kses( html_entity_decode( $header_scripts_styles ), self::$kses_allowed );
 			?>
 		<?php } else {
 			add_action( 'wp_head', function() use( $styles, $scripts, $header_scripts_styles){
@@ -1798,7 +1815,7 @@ class ContentMask {
 					htmlspecialchars_decode( esc_html( $styles ) ),
 					do_action( 'content_mask_iframe_header' ),
 					html_entity_decode( wp_kses( $scripts, self::$kses_allowed ) ),
-					html_entity_decode( wp_kses( $header_scripts_styles , self::$kses_allowed ) )
+					wp_kses( html_entity_decode( $header_scripts_styles ), self::$kses_allowed )
 				);
 			}, 9999);
 			echo wp_head();
@@ -1853,7 +1870,7 @@ class ContentMask {
 		<!-- Content Masked via Content Mask <?php echo $this->get_content_mask_data()['Version']; ?> -->
 		<iframe id="content-mask-frame" width="100%" height="100%" src="<?php echo esc_url( $url ); ?>" frameborder="0" allowfullscreen></iframe>
 		<?php
-			echo htmlspecialchars_decode( wp_kses( $_footer_scripts, self::$kses_allowed ) );
+			echo wp_kses( html_entity_decode( $_footer_scripts ), self::$kses_allowed );
 			echo htmlspecialchars_decode( wp_kses( $footer_scripts, self::$kses_allowed ) );
 			do_action( 'content_mask_iframe_footer' );
 
@@ -2143,11 +2160,21 @@ class ContentMask {
 	 * @return string - The sanitized content
 	 */
 	public function sanitize_textarea( $content ){
-		if( !current_user_can( 'unfiltered_html' ) ){
-			$content = preg_replace('#<script(.*?)>(.*?)</script>#is', '', $content);
+		if( ! current_user_can( 'unfiltered_html' ) ){
+			/**
+			 * Users who cannot post unfiltered HTML get scripts, inline event
+			 * handlers, and dangerous protocols stripped by wp_kses. This runs
+			 * while the tags are still live, so it reliably removes vectors the
+			 * previous <script> regex could not: it never touched event handlers
+			 * such as onerror, and it was bypassable with nested tags.
+			 */
+			$allowed = self::$kses_allowed;
+			unset( $allowed['script'] );
+
+			$content = wp_kses( $content, $allowed );
 		}
 
-		return htmlentities($content);
+		return htmlentities( $content );
 	}
 
 

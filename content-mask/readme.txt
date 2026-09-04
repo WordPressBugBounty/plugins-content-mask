@@ -4,7 +4,7 @@ Donate Link: https://www.paypal.me/xhynk/
 Tags: Embed, Domain Mask, Mask, Redirect, Link
 Requires at Least: 4.7
 Tested Up To: 7.0
-Stable tag: 1.8.5.5
+Stable tag: 1.8.5.6
 Requires PHP: 5.4
 Author URI: https://xhynk.com/
 Plugin URL: https://xhynk.com/content-mask/
@@ -136,6 +136,10 @@ If your website is secured (with https://), make sure any links on the iframed p
 4. The same WordPress page with Content Mask enabled and set to https://example.com/. You can see the URL has remained the same but the content has been entirely replaced (on the front end only) by the content from https://example.com/
 
 == Changelog ==
+= 1.8.5.6 =
+* Security: fixed a Stored Cross-Site Scripting vulnerability in the per-post "Header Scripts & Styles" and "Footer Scripts" fields. A user who could edit posts, including Contributors, could store an event-handler payload that ran when an administrator previewed the pending post and, once published, for every visitor. Input from users without the unfiltered_html capability is now filtered with wp_kses while the markup is still live, and every affected render path filters the fully decoded value as its final step, which also neutralizes any payload already stored. Reported by Andrea Fiocchi via WPScan.
+* Fixed: the per-role restriction in can_mask_content() was inverted and never took effect, so an administrator could not disable Content Mask for a role. The role check now applies, and its hook registration moved to the init hook so the current user is available when it runs.
+
 = 1.8.5.5 =
 * Security: require the target post type's publish capability before creating a Content Mask over AJAX. This fixes a privilege escalation where a Contributor could publish a live mask (including a redirect) without the publish_posts capability.
 * Hardening: replaced the deprecated user_can_edit_post() permission checks with current_user_can( 'edit_post' ) on the edit, delete, toggle, and permission AJAX actions.
